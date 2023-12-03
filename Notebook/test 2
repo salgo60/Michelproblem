@@ -1,0 +1,39 @@
+from transformers import AutoImageProcessor, ViTMAEForPreTraining
+from PIL import Image
+import os
+import numpy as np
+from sklearn.model_selection import train_test_split
+
+def load_images(source_dir, label):
+    images = []
+    labels = []
+    for filename in os.listdir(source_dir):
+        if filename.endswith(".jpg") or filename.endswith(".png"):
+            img_path = os.path.join(source_dir, filename)
+            images.append(img_path)
+            labels.append(label)
+    return images, labels
+
+normal_images, normal_labels = load_images("Normal_resize", 0)
+oscc_images, oscc_labels = load_images("OSCC_resize", 1)
+
+all_images = normal_images + oscc_images
+all_labels = normal_labels + oscc_labels
+X_train, X_test, y_train, y_test = train_test_split(all_images, all_labels, test_size=0.2, random_state=42)
+X_train, X_val, y_train, y_val = train_test_split(X_train, y_train, test_size=0.25, random_state=42)
+
+processor = AutoImageProcessor.from_pretrained('facebook/vit-mae-base')
+model = ViTMAEForPreTraining.from_pretrained('facebook/vit-mae-base')
+
+def process_images(image_paths):
+    for path in image_paths:
+        image = Image.open(path)
+        inputs = processor(images=image, return_tensors="pt")
+        outputs = model(**inputs)
+        
+        loss = outputs.loss
+        mask = outputs.mask
+        ids_restore = outputs.ids_restore
+process_images(X_train)
+process_images(X_val)
+process_images(X_test)
