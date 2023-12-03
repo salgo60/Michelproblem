@@ -1,0 +1,99 @@
+import os
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torchvision import transforms
+from PIL import Image
+from transformers import AutoImageProcessor, ViTMAEForPreTraining
+from sklearn.model_selection import train_test_split
+
+def load_images(source_dir, label):
+    images = []
+    labels = []
+    for filename in os.listdir(source_dir):
+        if filename.endswith(".jpg") or filename.endswith(".png"):
+            img_path = os.path.join(source_dir, filename)
+            images.append(img_path)
+            labels.append(label)
+    return images, labels
+
+normal_images, normal_labels = load_images("Normal_resize", 0)
+oscc_images, oscc_labels = load_images("OSCC_resize", 1)
+all_images = normal_images + oscc_images
+all_labels = normal_labels + oscc_labels
+
+X_train, X_test, y_train, y_test = train_test_split(all_images, all_labels, test_size=0.2, random_state=42)
+X_train, X_val, y_train, y_val = train_test_split(X_train, y_train, test_size=0.25, random_state=42)
+
+class CustomModel(nn.Module):
+    def __init__(self, vit_model):
+        super(CustomModel, self).__init__()
+        self.vit_model = vit_model
+        self.new_layer = nn.Linear(vit_model.config.hidden_size, 1)
+
+    def forward(self, x):
+        with torch.no_grad():
+            outputs = self.vit_model(**x)
+        x = outputs.last_hidden_state[:, 0, :]
+        x = self.new_layer(x)
+        return x
+
+def process_image(image_path, processor):
+    image = Image.open(image_path)
+    transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+    ])
+    image = transform(image).unsqueeze(0)
+    return processor(images=image, return_tensors="pt")
+
+processor = AutoImageProcessor.from_pretrained('facebook/vit-mae-base')
+vit_model = ViTMAEForPreTraining.from_pretrained('facebook/vit-mae-base')
+for param in vit_model.parameters():
+    param.requires_grad = False
+
+custom_model = CustomModel(vit_model)
+
+# Weighted loss function
+#weight_for_class_0 = 1248 / (929 * 2) = 0.06716
+#weight_for_class_1 = 1248 / (319 * 2) = 1,95611
+weight = torch.tensor([0.06716, 1.95611])
+criterion = nn.BCEWithLogitsLoss(weight=weight)
+
+optimizer = optim.Adam(custom_model.new_layer.parameters(), lr=0.001)
+
+num_epochs = 10
+for epoch in range(num_epochs):
+    for image_path, label in zip(X_train, y_train):
+        inputs = process_image(image_path, processor)
+        outputs = custom_model(inputs)
+        label = torch.tensor([label], dtype=torch.float32)
+        loss = criterion(outputs, label.unsqueeze(1))
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+    print(f'Epoch {epoch+1}/{num_epochs}, Loss: {loss.item()}')
+
+torch.save(custom_model.state_dict(), 'custom_model.pth')
+
+def evaluate_model(model, data, labels, criterion, processor):
+    model.eval()
+    total_loss = 0
+    correct_predictions = 0
+    with torch.no_grad():
+        for image_path, label in zip(data, labels):
+            inputs = process_image(image_path, processor)
+            outputs = model(inputs)
+            loss = criterion(outputs, torch.tensor([label], dtype=torch.float32).unsqueeze(1))
+            total_loss += loss.item()
+            predicted = outputs.sigmoid().round()
+            correct_predictions += (predicted == label).sum().item()
+    avg_loss = total_loss / len(data)
+    accuracy = correct_predictions / len(data)
+    return avg_loss, accuracy
+
+val_loss, val_accuracy = evaluate_model(custom_model, X_val, y_val, criterion, processor)
+print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.4f}')
+
+test_loss, test_accuracy = evaluate_model(custom_model, X_test, y_test, criterion, processor)
+print(f'Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.4f}')
