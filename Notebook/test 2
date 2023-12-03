@@ -54,7 +54,12 @@ for param in vit_model.parameters():
 
 custom_model = CustomModel(vit_model)
 
-criterion = nn.BCEWithLogitsLoss()
+# Weighted loss function
+#weight_for_class_0 = 1248 / (929 * 2) = 0.06716
+#weight_for_class_1 = 1248 / (319 * 2) = 1,95611
+weight = torch.tensor([0.06716, 1.95611])
+criterion = nn.BCEWithLogitsLoss(weight=weight)
+
 optimizer = optim.Adam(custom_model.new_layer.parameters(), lr=0.001)
 
 num_epochs = 10
@@ -87,9 +92,8 @@ def evaluate_model(model, data, labels, criterion, processor):
     accuracy = correct_predictions / len(data)
     return avg_loss, accuracy
 
-
 val_loss, val_accuracy = evaluate_model(custom_model, X_val, y_val, criterion, processor)
 print(f'Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_accuracy:.4f}')
 
 test_loss, test_accuracy = evaluate_model(custom_model, X_test, y_test, criterion, processor)
-print(f'Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.4
+print(f'Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.4f}')
