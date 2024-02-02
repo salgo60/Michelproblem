@@ -1,0 +1,1 @@
+echo "hello test från script fil skulle kunna vara ml load"
